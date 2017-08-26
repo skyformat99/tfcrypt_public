@@ -1,0 +1,147 @@
+tfcrypt toolkit -- a set of tools to manipulate data.
+
+tfcrypt is a modern, dd(1)-like raw data manipulation tool with embedded strong encryption.
+It has precise IO layer inside which can be used to encrypt files, disks and other media,
+as well as to manipulate raw data directly, dd(1) style.
+
+tfcrypt uses Skein and Threefish - public domain SHA3 candidate from famous,
+well recognised cryptographer Bruce Schneier, author of famous, still uncracked
+Blowfish and Twofish ciphers, which are in use still up to today.
+
+tfcrypt is actually a frontend for Threefish with (by default) CTR stream mode of operation.
+As a key it uses either password or keyfile, which is then hashed many times
+with Skein hash function. Actual key length is 1024 bits (128 bytes), which,
+if Threefish will stay uncracked, will force 2^1024 key variants to guess, which is
+179769313486231590772930519078902473361797697894230657273430081157732675805500963132708477322407536021120113879871393357658789768814416622492847430639474124377767893424865485276302219601246094119453082952085005768838150682342462881473913110540827237163350510684586298239947245938479716304835356329624224137216 (exact) keys.
+If you will try a 256'000'000 (256 million) keys each second, you will exhaust whole keyspace
+in approx. ~ 2.2267 * 10^292 years. That's purely amazing!
+
+For AES256 the number of tries with same speed will be from 3.58568 * 10^60 to 1.43427 * 10^61 yrs.
+For AES128 the number of tries with same speed will be from 1.05373 * 10^22 to 4.21495 * 10^22 yrs.
+(Depending on AES strength which may vary by one-two bits)
+
+Hashing speed on a Athlon64 5000+ machine, 64 bit mode shows that to prepare each password or
+keyfile into a fixed 128 byte key for Threefish to work on costs at about 0.4-0.7secs, depending
+on CPU load, single core, with about 200000+ Skein passes. Hence password preparation brute force
+mode is completely useless, and direct key search strategy is more appropriate.
+
+*** Please note that this program works best in 64 bit mode. See "Known BUGS" below. ***
+
+Features:
+
+* Plausible deniability: encrypted data file lacks perceptible, easy to guess header.
+It's also will be hard to "catch" a truly decrypted state without exact knowledge of
+encrypted contents when brute force attack is in effect, because you must run a procedure
+which will tell you what kind of decrypted file is. It maybe however easy to guess
+if it's still random data, or decrypted buffer has some format.
+For more details please see the PROMISES file.
+* Many completely new modes of encryption provide confidentiality, security and authenticity
+of data encrypted with tfcrypt.
+* CTR mode of encryption: easily parallelisable, this Threefish engine can be ported to
+other cryptosystems to be used as network stream encryption. It can be used as a generic PRNG.
+* Optional key authentication: a MAC (Message Authentication Code), or simply, a cryptochecksum,
+can be attached either to a file itself or saved as a separate file (both in ASCII or binary).
+This MAC is encrypted by key, so it cannot be converted back and brute forced to other hashes.
+* MAC cryptochecksum can depend on a separate key which maybe a same key used while encrypting,
+or completely separate unlimited length key. Absence of key will yield a standard Skein hashsum.
+* Key derivation hardening by generating key data through multiple Skein invocations (by default,
+23000 is set in defs.h config include file). Higher numbers (200000+ and more) reduce
+brute force speed on modern Athlon64 5000+ just to 10-20 passwords per second with
+highly optimised 64 bit Skein code.
+* Keygen sources are password string or key file of arbitrary length.
+* In modes other than TCTR key can be further extended to 1216 bits by using a secret tweak.
+* TCTR mode is a completely new mode which turns a ECB mode into Tweaked CTR, which provides
+parallelism of operation together with privacy and integrity of changes.
+* Specifying custom reduced bits sizes for key size, Skein hash and MAC length.
+* Specifying custom initial counter value, or dump it's derived value.
+Dumping a value and saving it alongside an encrypted file effectively reduces number
+of Skein passes required to brute force a raw 1024 bit key (NOT an initial data provided by user,
+such as password or keyfile), while specifying a custom counter value and saving it alongside
+does NOT weaken key security. So dump a counter value only, and only when you need it.
+* Plain mode permits using tfcrypt's IO layer without encryption.
+* Error recovery modes like dd's conv=sync,noerror.
+* Transparently works with block devices, pipes and standard streams.
+* Overwriting file in place, by actually overwriting, NOT writing to new file and removing old one.
+* Embedded hash tools: specifying -sum argument with file name(s), tfcrypt will calculate
+a Skein 1024 bit hash sum of given file. If you specify an optional bits limit, for example,
+as -sum256, you will limit Skein to 256 bits of operation. Note that this is NOT a same as
+using Skein256 algorithm: it will still use 1024 bits variant, but with reduced bits setting.
+* Included is tiny in-memory (no syscalls) benchmark tool which will help you to determine
+peak Threefish processing speed on this CPU. Note: as tfcrypt currently is single threaded,
+benchmark is done only on a single CPU core. This helps to identify exact Threefish speed
+of a single CPU core.
+This benchmark permits running tfcrypt with and without MAC signing/verifying mode.
+* Embedded hashing tool accepts user's MAC key file or password, which can be used as a
+basic poor man data signature tool.
+* Included a base64 encoding/decoding tool with newline support
+in case if host OS does not have one.
+* Keygen and PRNG tool which helps generating random keys, cipherstreams and counters.
+It is much faster than Linux's urandom, even in 32 bit mode!
+* Includes human readable size specifiers so you can use the sizes like "1M" over "1048576".
+Note that _all_ sizes are related to 8 bit bytes and a kilobyte here counted as 1024 bytes,
+NOT 1000 bytes (same goes for any other prefixes up to P (Peta byte)).
+Please also note that fractioned specifiers like "1.5M" are NOT supported, even if
+tfcrypt includes floating point operations.
+* Since 142, tfcrypt randomises tweak in same way as counter data: derives it with Skein from key.
+An option was added to explicitly disable this behavior for earlier encrypted data.
+Thus, new users are not required to mind (and probably share) additional tweak value.
+
+Precautions:
+
+* When CTR mode is used, it is required that you will use a single key per single plaintext.
+Otherwise, an adversary will be able to decrypt all your single keyed data simply by recovering
+a plain generated keystream from multiple messages. That's simple rule about all stream ciphers.
+Because tfcrypt derives counter data from key with Skein, it will be constant if key is constant.
+Therefore, tfcrypt is considered secure, if properly used.
+Since 48, tfcrypt has an option to randomise counter data and prepend it to ciphertext in plain.
+You should use it if you have no chance to change keys often. With fixed size streams, it is hard
+to do, so a key change maybe still required.
+Please also note that CTR mode is completely unsuitable for disk encryption because an adversary
+can silently mirror data between changes, then recover some bits out of changes.
+Since 100, for disk encryption, there are more modes designed specially for this purpose.
+* tfcrypt never alters length of plaintext in any way. That means that if a mode of operation
+which requires padding is used, then, if there is an incomplete last block, it gets encrypted
+in CTR mode regardless of user's intent. There are no warnings about that. An option was
+added with these modes to request proper padding of last incomplete block. On decryption however
+tfcrypt can't tell the length of last padded block, so recovered plaintext will be lengthier
+and hashsums can be different. This can be fixed with specifying exact length of plaintext to
+decrypt. Program will decrypt whole last block, but padding will be stripped away.
+
+Developer notes:
+
+There are several macros to ease reading the code. First, YES and NO map to 1 and 0 respectively,
+others are option specific and should be used when an the option context is in effect.
+There is only one exception: IO end schedule which is done by changing a do_stop variable.
+STOP_BEGAN specifies that a while (1) IO loop should be exited, but still performs some
+post IO (mainly stats) operations, whereas STOP_FULL says that IO is completely halted.
+Otherwise do_stop must be zero so IO loop will function.
+
+To be portable between various TF implementations and variants, tfcrypt includes some
+macros that construct function names from same macros when other TF variant is swapped in.
+So if you see something like that:
+
+	TF_X(crypt)(&tctx, srcblk, sizeof(srcblk), dstblk);
+
+, this means that a call to tfBITS_crypt is made, where BITS is actual bitness of TF variant.
+You should write code in same way. Please see tfcrypt.h header for macro definitions,
+and edit it when you swap TF variants.
+
+Known BUGS:
+
+* The Threefish and Skein work fast and nice _only_ on 64 bit machines. For 32 bit ones,
+there is no official 32 bit Skein/Threefish variant is defined. Go blame original authors
+for that, because this program can be easily transitioned to other cipher algorithm.
+Where 64 bit native C unrolled Threefish (as defined in fastfish.h) performs at about
+of 240M/s on Athlon64 5000+ CPU, it snails at about 40M/s best (clang) when compiled as 32 bit code.
+On various 32 bit embedded boxes, it's _much_ worse and suitable only for password hashing
+(assuming code size and stack space wasted is not a concern, which may be not valid in all cases).
+I plan someday in my spare time to implement an optimised 32 bit version for x86 using
+MMX/SSE regs. This may happen or not. I do not know a speed gain in this case. And this
+version should be really an unrolled one. I do not want to take one from Skein NIST CD,
+because it's _very bad_ coding style and hard to understand (sorry Bruce), it is Skein
+and Threefish merged into one function where init/crypt stages are blended together,
+and I wish to learn and remember algorithm while implementing so it will sit in my head.
+* Please be warned that if you're encrypting and generating a MAC for encrypted message,
+or decrypting and verifying a message, your encryption/decryption speeds will be
+approx. two times slower. So, if you normally encrypt the file with speed of 240M/s, your speed
+will be about 110-140M/s when generating a MAC.

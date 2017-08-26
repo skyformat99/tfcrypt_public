@@ -1,0 +1,45 @@
+This is PROMISES file containing a list of promises and axioms that tfcrypt will support forever.
+Any failure to support at least one of these, either intentional or by means of undesired behavior
+will be counted as a bug which must be fixed ASAP, with a mandatory tag and a huge banner
+everywhere that current version of program was found to be unusable.
+This list also contains items that will be never supported by any version of tfcrypt.
+
+Please note that this list applies to tfcrypt version which has Threefish encryption and Skein
+hash functions included, 1024 bits versions. Any other versions of tfcrypt with Threefish/Skein
+pair inherit same list, but obviously it will apply to all data encrypted only with them, not
+with original tfcrypt, Threefish and Skein, all 1024 bits.
+
+Here the list begins:
+
+- The program will NEVER disclose or give a hint about itself: never any headers shall be
+appended or otherwise stored into ciphertext directly, neither in plain or encrypted, so there
+will be no advantage for an attacker to brute force or otherwise know that this data may contain
+a fixed data block which may be guessed and compared with. This may affect usability when last
+block of data is incomplete and it may be padded with zeroes to be safely encrypted, but this is
+a user task then to distinguish the data from padding, because security is first target over
+usability here.
+- The program will NEVER give a hint about options that were used to encrypt the data.
+- All data encrypted with all modes available, in past and future, with all options available
+shall be decryptable regardless of program complexity to support all the available options.
+- All bugs introduced shall be fixed, but if a mass encryption with buggy version did happened,
+the bug that caused such behavior shall be retained functional and emulated within the program,
+regardless of complexity to support such behavior. Optionally, this bug may be omitted from the
+program with compile time option, but it shall be always available for inclusion into program
+binary, within program source code readily, not via out of tree patches or modifications.
+- The program shall not have an ability, either by option or directly while operating, to
+disclosure absolutely private information such as plaintext data or it's parts and key data
+or it's parts, nor give a hints about content of these data. By disclosure it is understood that
+program emits such information directly to display. Otherwise, dumping raw key data shall be
+permitted with an option which explicitly is requested by user while running the program, and
+by default never dump key data otherwise.
+- The program shall not save private parts which may aid decrypting the plaintext data into
+ciphertext itself, such as key data or it's parts.
+- Counter data is counted as a public data and it maybe saved into ciphertext.
+- The same goes for tweak data, but an option can turn tweak data into key extension, which then
+becomes an optional secret, which still can be stored into ciphertext as plain data block.
+- All the promises apply to encryption and decryption tasks. IO operations may fail regardless
+of program correctness, and program is not responsible for misencryptions that were missed
+because of IO errors, although program always fails loudly in such events if not told opposite.
+However in case of IO bugs, those shall be fixed, but bug emulation even for mass misencryptions
+should not be supported, and historic versions should be used to decrypt such data, if it possible
+to decrypt it.

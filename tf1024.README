@@ -1,0 +1,285 @@
+Separated Skein and Threefish, slow/compact and fast/large implementations, 1024 bits only.
+
+INTRODUCTION
+
+Unlike original Bruce's SHA3 submission source code, this is compact implementation of Skein
+and Threefish separated, where Skein's Threefish building block is separately implemented
+and available for general usage.
+Publicly defined functions automatically do input data conversions to little endian encoding.
+Both Skein and Threefish here are endian safe.
+This implementation provides some more block cipher modes of operation other than CTR, which
+was used within tfcrypt code for a very long time before. These are:
+- CBC classic mode which is used for testing,
+- TCTR mode which is limited only to tweakable ciphers,
+
+BUILD MACROS
+
+While including tf1024 into your program you may customise how it must behave and how
+much space should it take.
+Please note that Skein hash function is always enabled. Options listed below control only
+how much of Threefish code you want to be included into your executable.
+
+TF_FAST is conventional define which includes any fast Threefish single block processing
+routine instead of usual unoptimised one with for loops and table lookups. If there is no
+any, a build #error should be raised to tell that desired functionality is not available.
+
+TF_NEED_CORE includes functions supporting safe context initialising, key and tweak establishment,
+to work with a single block encryption context.
+This does not control how main encryption functions are included. By default, at least
+single block encryption function is always present here because Skein is always enabled.
+
+TF_NEED_MODES enables main mode-aware tf1024_ctx struct with counters. It also enables functions
+that are needed to be there to work with that struct, such as counter start/rewind functions.
+
+TF_NEED_DECRYPT will include a separate block decryption function. For Skein alone, and also
+for CTR mode Threefish, this function is NOT required. However for other modes that tf1024
+currently supports it is mandatory to decrypt data encrypted with them, so you have to include it.
+
+TF_NEED_CTR_MODE enables main CTR mode Threefish function. Historically it was always enabled,
+but with introduction of several other modes into tfcrypt code it was made optional.
+
+TF_NEED_CTR_BACKUP includes a second block sized counter data block into tf1024_ctx, and
+counter related functions save an initial counter data into it, which then never changes.
+Without this you will not be able to restore original counter which you passed to
+tf1024_set_counter function at beginning, and you'll have to save it youself somewhere else.
+This is useful for programs which work with data space not linearly but accessing it
+randomly, like disk encryption tools.
+
+TF_NEED_TCTR_MODE includes a TCTR mode - Tweak-Counter mode. A detailed explanation of this
+mode is given in this document in "MODES OF OPERATION" section below.
+Note that because TCTR mode works with single block tfc1024_ctx struct, you will need to call
+the tctr mode init and counter functions instead of regular ones.
+
+TF_NEED_CBC_MODE includes a conventional CBC mode. Nothing is new there. It is used by
+tfcrypt mainly for testing a speed against CTR or TCTR modes on a particular CPU.
+
+USEFUL MACROS
+
+To build portable code between Threefish and Skein versions that vary bits length, these macros
+are to help to replace a fixed numbers or to assist unit conversions. Please use them in
+variable and buffer initialisers, parameter specifiers and other such places in place of fixed
+numbers, so your code will be portable and it will possible to easily retarget it to different
+Threefish and Skein bits version.
+
+TF_KEY_SIZE is replaced with a maximum number of bytes that key and counter values may occupy.
+In tf1024, it is 128 (bytes). Example usage:
+
+	unsigned char key[TF_KEY_SIZE];
+
+allocates a key buffer of 128 bytes size. It is recommended to zero this buffer like that:
+
+	memset(key, 0, sizeof(key));
+
+, or
+
+	memset(key, 0, TF_KEY_SIZE);
+
+Similar length specifiers are used with memcpy and other memory manipulation functions.
+
+TF_BLOCK_SIZE is replaced with a maximum number of bytes that a single encryption block may occupy.
+Because block size of Threefish and Skein is same as key size, this is the same as TF_KEY_SIZE,
+and it is alias to TF_KEY_SIZE.
+To ease reading code, this define should be used in context where work is done with data blocks.
+
+TF_BLOCK_UNITS specifies a number of integer units that occupy a single block. For 64 bit integers,
+this is 16. It is useful where work is done with these integers rather in memory bytes.
+A possible 32 bit native implementation defines this to 32.
+
+TF_SIZE_UNIT specifies a single working integer unit size, in bytes. Currently, 8 (64 bit).
+
+TF_NR_UNITS is same as TF_BLOCK_UNITS, but TF_BLOCK_UNITS is alias to this define.
+TF_NR_UNITS is clearly specified as a fixed value which is not preprocessed.
+
+TF_TO_BITS(x) converts bytes specifier x to bits. For example, TF_TO_BITS(128) will be replaced 
+with 1024, TF_TO_BITS(16) will be replaced with 128.
+
+TF_FROM_BITS(x) converts bits specifier x into number of bytes. For example, TF_FROM_BITS(1024)
+will be replaced with 128, and TF_FROM_BITS(256) will be replaced with 32.
+
+TF_MAX_BITS specifies current bits version of Threefish and Skein, and specifies maximum
+number of bits that can be used with this implementation. Use TF_FROM_BITS(TF_MAX_BITS) to
+get a number in bytes.
+
+STRUCTURES AND DATA TYPES
+
+Any structures defined by this implementation are to be used as distinct types.
+
+tfc1024_ctx is typedef structure which represents a single block Threefish context. It does not
+contain any block mode of operation information.
+Only when a TCTR mode is enabled, and only when a counter backup is enabled too,
+it will include a tweak backup block of same size as the tweak itself.
+
+tf1024_ctx is typedef structure which represents a Threefish workplace for CTR-like modes.
+It may contain at least a counter data, and may include other necessary information, thus,
+it's size maybe much larger that original modeless Threefish structure.
+It is important to know that this structure embeds a tfc1024_ctx one as "tfc" member.
+Sometimes, in multi mode environment, you may need a full this one, or just a "core" one.
+
+sk1024_ctx is typedef structure which is required to work with Skein hashes. It includes single
+block Threefish context, temporary operating buffer space, bits and length markers.
+It is important to know that this structure embeds a tfc1024_ctx one as "tfc" member.
+
+THREEFISH API DESCRIPTION
+
+tfc1024_init accepts a tfc1024_ctx struct and initialises it. Currently, it zeroes the context,
+but you should not rely on this behavior: call tf1024_init instead of zeroing context manually.
+
+tfc1024_init_tctr is a special tfc1024_init version for use with TCTR mode.
+Please do not use tf1024_init_tctr with any other mode nor tfc1024_init with TCTR mode.
+
+tfc1024_done (safely) clears tfc1024_ctx structure after use.
+It is currently same as tfc1024_init. Unlike tfc1024_init, it is allowed to zero
+context manually instead of calling tfc1024_done. tfc1024_done may however use secure memory
+extensions provided by platform(s) in future, so it is recommended to use it.
+
+Both tfc1024_init and tfc1024_done have their modes aware equivalents: tf1024_init and tf1024_done.
+Please use them if you're using one of the modes other than TCTR.
+
+tfc1024_set_key takes provided key buffer and establishes an encryption key inside tfc1024_ctx.
+If key is lesser size than TF_KEY_SIZE (128 bytes), remaining key tail is initialised to zeroes.
+If key is bigger than TF_KEY_SIZE (128 bytes), this function DOES NOTHING.
+
+tfc1024_set_tweak sets 128 bit (16 byte) tweak value, which is used like a second (shared) key,
+or as a counter when a TCTR mode of operation is used.
+Unlike tfc1024_set_key, it expects a fixed length buffer to read and does not take/check length.
+If tfc1024_set_tweak is not called, by default, a zeroed in tfc1024_init tweak is used.
+
+tf1024_start_counter sets initial counter inside tf1024_ctx. Like tfc1024_set_tweak, this function
+expects a fixed TF_KEY_SIZE (128 bytes) buffer. It also does some internal bookkeeping if a
+counter backup is required.
+
+tf1024_rewind_counter adds values to existing counter. If counter was previously advanced during
+encryption process, it resets the counter to a value provided with tf1024_start_counter.
+tf1024_rewind_counter operates only forward, no substraction is possible.
+You can however pass a value which will rollover a counter, thus, rewind it backwards.
+
+tfc1024_encrypt_blk and tfc1024_decrypt_blk operate directly on a single TF_BLOCK_UNITS block.
+They accept a tfc1024_ctx structure which can be obtained from tf1024_ctx modes aware one
+by passing a "tfc" member contained within.
+Please note that these functions operate on raw 64 bit integers which maybe subjected to
+endianness issues. Convert values between host and little endian if needed with data_to_le64.
+
+tf1024_crypt is CTR mode encryption routine. It takes src buffer of slen length, and
+encrypts or decrypts it into dst buffer, which must be at least slen size.
+During operation, counter is advanced by one each TF_BLOCK_SIZE block (128 bytes).
+Function takes arbitrary buffer length, aligned or not to 128 byte boundaries.
+dst can be same memory block as src: tf1024_crypt uses temporary 128 block space during operation.
+All other mode functions there accept almost same parameters as tf1024_crypt.
+
+TCTR mode functions accept tfc1024_ctx struct instead of tf1024_ctx, because this mode operates
+in ECB mode while advancing tweak value, which is embedded into tfc1024_ctx. Thus, ECB mode
+automatically turns into Tweak Counter mode.
+
+tf1024_start_counter_tctr is like tf1024_start_counter, but it is used explicitly with TCTR mode.
+Same goes for tf1024_rewind_counter_tctr, which is a tf1024_rewind_counter analog.
+
+tf1024_tctr_encrypt and tf1024_tctr_decrypt do encryptions and decryptions in TCTR mode.
+
+tf1024_cbc_encrypt and tf1024_cbc_decrypt do encryptions and decryptions in CBC mode.
+
+MODES OF OPERATION
+
+* CTR mode - Counter.
+Counter mode generates PRNG blocks from encrypting an incrementing values of counter.
+Then it adds cleartext to generated PRNG, just _after_ encryption.
+CTR mode is best for it's paralleling feature, when cipher blocks are independent of each other.
+This mode suffers from reuse of same key-counter pair. That is, an attacker which
+captured original and updated message can diff them to changed bits _without_ deciphering them
+at all. Since tfcrypt generates counter out of key by default, it cannot ensure that user
+did a proper key or counter schedule so generated PRNG will be completely different.
+Additionally to that, CTR mode suffers from bit flip attack, when an attacker can try
+to guess a bit on his own benefit. For example, knowing internals of encrypted file structure
+may help, especially if this file will be executed by system or otherwise being interpreted.
+This can be mitigated by using MAC feature of tfcrypt, but sometimes this is undesirable.
+Thus, CTR mode does not guarantee strong error generating when altered block gets decrypted.
+
+* CBC mode - Cipher block chaining.
+CBC mode encrypts plaintext block into ciphertext one, then uses the result block
+as a PRNG source for next one, to which next plaintext block is added (XORed), result
+gets encrypted and resulting PRNG used for next block, and so on.
+CBC is used widely and it's well known mode, but it suffer from some problems too, mainly
+that it's IV must not be predictable, and other problems such as bit-flip in next chain block.
+This mode is not perfectly parallelisable. Encryption is not parallelisable at all, while
+decryption maybe parallel because next decrypted blocks will be valid.
+While CBC offers strong error generating, it affects only first block while next one
+gets silently bit-flipped, thus it is not perfectly secure.
+CBC mode was added to tfcrypt mainly for testing, and you should not use it daily.
+
+* TCTR mode - Tweak Counter mode.
+Tweak Counter mode increments a special key part in Threefish cipher - a tweak, which changes
+ciphertext once tweak is changed either by one or more bits.
+Tweak itself maybe public just like counter value in CTR mode.
+It does not affect plaintext or counter in any ways, thus, it is very simple mode.
+In Threefish (Skein), tweak is declared to be a 128 bit value, but internally it's
+a 192 bit value. tfcrypt uses all bits in tweak thus extending tweak space to 192 bits.
+
+SKEIN API DESCRIPTION
+
+sk1024_init prepares context and sets required output bits version. Bits can be any value from
+8 to TF_MAX_BITS (1024). So, Skein is defined to be variable output size hash function.
+
+sk1024_update processes single data buffer of provided length and updates context.
+
+sk1024_final does final operations and emits a calculated hash into outhash. Size of outhash
+buffer must be at least TF_FROM_BITS(hbits), where hbits is a parameter that was specified
+to sk1024_init.
+
+sk1024 is single instance function which processes a single block of data and returns a hash.
+It is a init->update->final stages combined into one.
+It takes src buffer of slen length which may be of arbitrary length, and it emits a
+TF_FROM_BITS(hbits) length hash into dst buffer, hence, dst must be at least TF_FROM_BITS(hbits)
+wide to accept it.
+src and dst buffers may be same.
+
+Both sk1024_final and sk1024 can accept limited length hash buffers, not the full
+TF_BLOCK_SIZE buffers, but only when it was clearly specified with hbits setting.
+As an example:
+
+	unsigned char hash[TF_FROM_BITS(384)];
+	sk1024(src, slen, hash, 384);
+
+is perfectly valid, and sk1024 (and sk1024_final) will not touch memory they not told to.
+
+HELPER FUNCTIONS
+
+data_to_le64 ensures that raw user provided data inside 64 bit integers is little endian,
+so misciphers will not occur. Thus, this Threefish code is endian aware.
+
+ctr_inc increments a counter of many elements. An elements number is given too.
+This function supports nearly infinite number of deals to increment in a counter manner.
+
+ctr_add arithmetically adds a counter value to existing counter.
+Like ctr_inc, it supports an infinite number of deals to increment.
+
+tf_units(x) is used internally, and it is replaced with size of data array in working units
+rather than memory bytes.
+
+MEMORY AND STACK REQUIREMENTS
+
+Since Skein and Threefish are memory hungry because they operate with such a big nr. of bits,
+memory requirements are much bigger that for other algorithms.
+All sizes are specified for 1024 bits version.
+
+- Threefish without CTR will take 160 bytes.
+- Threefish with CTR will take 400+ bytes, and bigger with additional modes.
+- Raw Skein with Threefish without CTR takes about 300 bytes.
+
+Numbers may vary depending of compiler optimisations, enabled modes and other settings.
+
+CAVEATS
+
+Like tfcrypt program, Skein and Threefish there will dislike operating with odd bits numbers.
+Specifying bits for example as 257 may and will yield values that will be shorter, and
+memory errors and overflows may happen. DO NOT USE ODD BITS SETTINGS AT ALL, IT WAS NOT TESTED.
+You have been warned.
+
+Using fixed numbers instead of portable defines are at your own risk. If data unit, bits number
+will change, you will end up with strange memory errors, overflows and other horrors.
+
+PORTING
+
+Porting this to other system should not be so hard.
+You have to implement stdint (these uint*_t types), and your compiler should
+understand a reasonable amount of C99 constructs (gcc 4.2.1 is your reference).
+
+-- 25Apr2017.
